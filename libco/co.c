@@ -1,5 +1,4 @@
 #include "co.h"
-#include "linkedList.h"
 #include <time.h>
 #include <stdlib.h>
 #include <string.h>
@@ -8,40 +7,62 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-threadNode *head, *tail, *currentThread;
+co *head, *tail, *currentThread;
 int idCount = 0;	// initial coroutinu number
-
-void initCoroutine()
+co* removeDead(co* node)
 {
-	currentThread = tail = head = init();
+   co* tmp1=node->prev;
+   co* tmp2=node->next;
+   tmp1->next=tmp2;
+   if(tmp2){
+    tmp2->prev=tmp1;
+   }
+   free(node);
+   return tmp1;
+}
+
+// return the tail pointer into which to insert  
+co *insertTail(co *tail, co *node)
+{
+	tail->next = node;
+	node->next = NULL;
+	node->prev = tail;
+  tail=node;
+	return tail;
 }
 
 // sp->$rsp; arg->%rdi; jmp *entry;
 static inline void stack_switch_call(void *sp, void *entry, void *arg) {
   asm volatile (
 #if __x86_64__
-    "movq %0, %%rsp; movq %2, %%rdi; jmp *%1"
+    "movq %0, %%rsp;movq %2, %%rdi; call *%1"
       : : "b"((unsigned char*)sp), "d"(entry), "a"(arg) : "memory"
 #else
-    "movl %0, %%esp; movl %2, 4(%0); jmp *%1"
+    "movl %0, %%esp; movl %2, 4(%0); call *%1"
       : : "b"((unsigned char*)sp - 8), "d"(entry), "a"(arg) : "memory"
 #endif
   );
 }
 
+
 co *co_start(const char *name, void (*func)(void *), void *arg) {
 	// initialize a co struct of coroutine
-	co *thread = malloc(sizeof(co));
+  // if idcount==1 create head tail currentThread
+  if(idCount==0)
+  {
+    srand(time(NULL));
+    head=tail=currentThread=(co*)malloc(sizeof(co));
+    head->prev=NULL;
+    head->next=NULL;
+  }
+	co *thread = (co*)malloc(sizeof(co));
 	strcpy(thread->name,name);
 	thread->func = func;
 	thread->arg = arg;
 	thread->cid = ++idCount;	
 	thread->status = CO_NEW;
-	thread->waiter = NULL;
-	//thread->env = (jmp_buf*)malloc(sizeof(jmp_buf));
-	threadNode * localThread = (threadNode*)malloc(sizeof(threadNode));
-	localThread->thread = thread;
-	tail = insertTail(tail, localThread);
+	
+	tail = insertTail(tail, thread);
 
 	return thread; 
 }
@@ -53,36 +74,35 @@ void co_wait(co *co) {
 	}
 	assert(co->status == CO_DEAD);
 	// release resource
-	free(co);	
+  removeDead(co);
 }
 
 // Search the next thread to run if the thread's status is CO_NEW
 co *searchNextNewThread() //寻找下一个可以运行的协程
 {
-	threadNode *nextThread = head;
-	srand(time(NULL));
+	co *nextThread = head;
 	int randomThreadIndex = rand() % idCount + 1;
 	while(randomThreadIndex--) 
 		nextThread = nextThread->next;	
 	
-	return nextThread->thread; 
+	return nextThread; 
 }
 
 void co_yield() {
-	int val = setjmp(currentThread->thread->env);
+  co* tmp=currentThread;
+	int val = setjmp(currentThread->env);
 	if(val == 0) {
 		// which indicats it was called by setjmp directly
-		co *cur = searchNextNewThread();//该函数不应该挑选到dead的协程，可能会导致等待的协程再也无法启动。		 
+		co *cur = searchNextNewThread();	
+    currentThread=cur; 
 		if(cur->status == CO_NEW) {
-			cur->status = CO_RUNNING;
+			cur->status = CO_ALIVE;
 			stack_switch_call(cur->stack+STACK_SIZE-1, cur->func, cur->arg);			
-		} else if(cur->status == CO_RUNNING) {
-			longjmp((cur->env), cur->cid);
-		}else if(cur->status==CO_WAITTING)
+		}else if(cur->status==CO_ALIVE)
 		{
-			cur->status=CO_RUNNING;
 			longjmp((cur->env), cur->cid);
 		}
 		cur->status = CO_DEAD;	// 
 	}
+  currentThread=tmp;
 }

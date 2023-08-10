@@ -2,14 +2,13 @@
 #include "co.h"
 
 void entry(void *arg) {
-  while (1) {
-    printf("%s", (const char *)arg);
+  int num=0;
+  while (num--) {
+    printf("%s\n", (const char *)arg);
     co_yield();
   }
 }
-extern void initCoroutine();
 int main() {
-	initCoroutine();
   co *co1 = co_start("co1", entry, "a");
   co *co2 = co_start("co2", entry, "b");
   co_wait(co1); // never returns
