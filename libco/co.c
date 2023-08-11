@@ -17,7 +17,7 @@ co* removeDead(co* node)
    if(tmp2){
     tmp2->prev=tmp1;
    }
-   free(node);
+   idCount--;
    return tmp1;
 }
 
@@ -27,7 +27,7 @@ co *insertTail(co *tail, co *node)
 	tail->next = node;
 	node->next = NULL;
 	node->prev = tail;
-  tail=node;
+ 	 tail=node;
 	return tail;
 }
 
@@ -35,10 +35,10 @@ co *insertTail(co *tail, co *node)
 static inline void stack_switch_call(void *sp, void *entry, void *arg) {
   asm volatile (
 #if __x86_64__
-    "movq %0, %%rsp;movq %2, %%rdi; call *%1"
+    "movq %0, %%rsp;movq %2, %%rdi;call *%1"
       : : "b"((unsigned char*)sp), "d"(entry), "a"(arg) : "memory"
 #else
-    "movl %0, %%esp; movl %2, 4(%0); call *%1"
+    "movl %0, %%esp; movl %2, 4(%0);call *%1"
       : : "b"((unsigned char*)sp - 8), "d"(entry), "a"(arg) : "memory"
 #endif
   );
@@ -47,7 +47,7 @@ static inline void stack_switch_call(void *sp, void *entry, void *arg) {
 
 co *co_start(const char *name, void (*func)(void *), void *arg) {
 	// initialize a co struct of coroutine
-  // if idcount==1 create head tail currentThread
+  // if idcount==0 create head tail currentThread
   if(idCount==0)
   {
     srand(time(NULL));
@@ -68,17 +68,16 @@ co *co_start(const char *name, void (*func)(void *), void *arg) {
 }
 
 void co_wait(co *co) {
-
 	while(co->status != CO_DEAD) {
-		co_yield();
+		co_sche();
 	}
 	assert(co->status == CO_DEAD);
 	// release resource
-  removeDead(co);
+  	free(co);
 }
 
 // Search the next thread to run if the thread's status is CO_NEW
-co *searchNextNewThread() //寻找下一个可以运行的协程
+co *searchNextNewThread() //
 {
 	co *nextThread = head;
 	int randomThreadIndex = rand() % idCount + 1;
@@ -88,21 +87,30 @@ co *searchNextNewThread() //寻找下一个可以运行的协程
 	return nextThread; 
 }
 
-void co_yield() {
-  co* tmp=currentThread;
+void co_sche() {
+  	co* tmp=currentThread;
 	int val = setjmp(currentThread->env);
 	if(val == 0) {
 		// which indicats it was called by setjmp directly
-		co *cur = searchNextNewThread();	
-    currentThread=cur; 
-		if(cur->status == CO_NEW) {
-			cur->status = CO_ALIVE;
-			stack_switch_call(cur->stack+STACK_SIZE-1, cur->func, cur->arg);			
-		}else if(cur->status==CO_ALIVE)
+		currentThread=searchNextNewThread(); 
+		if(currentThread->status == CO_NEW) {
+			currentThread->status = CO_ALIVE;
+			stack_switch_call(currentThread->stack+STACK_SIZE-1, currentThread->func, currentThread->arg);
+		}else if(currentThread->status==CO_ALIVE)
 		{
-			longjmp((cur->env), cur->cid);
+			longjmp((currentThread->env), currentThread->cid);
 		}
-		cur->status = CO_DEAD;	// 
+		
+		currentThread->status=CO_DEAD;
+		removeDead(currentThread);
+		longjmp((head->env),0);			
 	}
-  currentThread=tmp;
+	currentThread=tmp;
+}
+void co_yield() {
+	int val = setjmp(currentThread->env);
+	if(val == 0) {
+		// which indicats it was called by setjmp directly
+		longjmp((head->env), 0);
+	}
 }
